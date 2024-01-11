@@ -58,6 +58,18 @@ procinit(void)
   }
 }
 
+uint64
+proccalc(void)
+{
+  struct proc *p;
+  uint64 count = 0;
+  for(p = proc; p < &proc[NPROC]; p++)
+    if (p->state != UNUSED)
+      count++;
+  return count;
+}
+
+
 // Must be called with interrupts disabled,
 // to prevent race with process being moved
 // to a different CPU.
@@ -295,6 +307,9 @@ fork(void)
     return -1;
   }
   np->sz = p->sz;
+
+  // copy tracing masks
+  np->mask = p->mask;
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
