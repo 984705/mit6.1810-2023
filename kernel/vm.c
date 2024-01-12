@@ -449,3 +449,35 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
     return -1;
   }
 }
+
+#ifdef LAB_PGTBL
+void
+dfs(pagetable_t pgtbl, int depth)
+{
+  for(int i = 0; i < 512; i++)
+  {
+    pte_t pte = pgtbl[i];
+    if((pte & PTE_V) && (pte & (PTE_R|PTE_W|PTE_X)) == 0){
+      uint64 child = PTE2PA(pte);
+      for(int i = depth; i > 0; i--)
+        printf(" ..");
+      printf("%d: pte %p pa %p\n", i, pte, child);  
+      dfs((pagetable_t)child, depth+1);
+    }
+    else if(pte & PTE_V)
+    {
+      uint64 pa = PTE2PA(pte);
+      for(int i = depth; i > 0; i--)
+        printf(" ..");
+      printf("%d: pte %p pa %p\n", i, pte, pa);
+    }
+  }
+}
+
+void
+vmprintf(pagetable_t pgtbl)
+{
+  printf("page table %p\n", pgtbl);
+  dfs(pgtbl, 1);
+}
+#endif
