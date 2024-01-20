@@ -29,6 +29,34 @@ trapinithart(void)
   w_stvec((uint64)kernelvec);
 }
 
+extern int count[PHYSTOP >> 12];
+extern char end[]; // first address after kernel.
+                   // defined by kernel.ld.
+
+int
+usercowtrap(pagetable_t pagetable, uint64 va)
+{
+  if(va >= MAXVA) 
+    return -1;
+  pte_t *pte = walk(pagetable, va, 0);
+  if((*pte & PTE_COW) == 0)
+    return -1;
+  char *new_pa;
+  if((new_pa = kalloc()) == 0){
+    return -1;
+  }
+  char* old_pa = (char*)PTE2PA(*pte);
+  memmove(new_pa, old_pa, PGSIZE);
+  uint flags = PTE_FLAGS(*pte);
+  flags = (flags & (~PTE_COW)) | PTE_W; 
+  uvmunmap(pagetable, PGROUNDDOWN(va), 1, 1);
+  if(mappages(pagetable, PGROUNDDOWN(va), PGSIZE, (uint64)new_pa, flags) != 0){
+    kfree(new_pa);
+    panic("copy-on-write failed: OOM");
+    return -1;
+  }
+  return 0;
+}
 //
 // handle an interrupt, exception, or system call from user space.
 // called from trampoline.S
@@ -65,9 +93,12 @@ usertrap(void)
     intr_on();
 
     syscall();
+  } else if(r_scause()==15){
+    if(usercowtrap(p->pagetable, r_stval()) == -1)
+      setkilled(p);
   } else if((which_dev = devintr()) != 0){
     // ok
-  } else {
+  } else{
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     setkilled(p);
