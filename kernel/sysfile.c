@@ -305,9 +305,10 @@ uint64
 sys_open(void)
 {
   char path[MAXPATH];
+  char sympath[MAXPATH];
   int fd, omode;
   struct file *f;
-  struct inode *ip;
+  struct inode *ip, *tp;
   int n;
 
   argint(1, &omode);
@@ -335,6 +336,34 @@ sys_open(void)
     }
   }
 
+  uint depth = 0;
+  while(ip->type == T_SYMLINK && !(omode & O_NOFOLLOW)){
+    if(readi(ip, 0, (uint64)sympath, 0, MAXPATH) != MAXPATH)
+      panic("open symlink: readi");
+ 
+    if(strncmp(sympath, path, n) == 0){
+      iunlockput(ip);
+      end_op();
+      return -1;
+    }
+ 
+    if((tp = namei(sympath)) == 0){
+      iunlockput(ip);
+      end_op();
+      return -1;
+    }
+ 
+    iunlock(ip);
+    ilock(tp);
+    ip = tp;
+ 
+    depth++;
+    if(depth >= 10){
+      iunlockput(ip);
+      end_op();
+      return -1;
+    }
+  }
   if(ip->type == T_DEVICE && (ip->major < 0 || ip->major >= NDEV)){
     iunlockput(ip);
     end_op();
@@ -501,5 +530,30 @@ sys_pipe(void)
     fileclose(wf);
     return -1;
   }
+  return 0;
+}
+
+uint64
+sys_symlink(void){
+  char sympath[MAXPATH];
+  char path[MAXPATH];
+
+  if(argstr(0, sympath, MAXPATH) < 0 || argstr(1, path, MAXPATH) < 0)
+    return -1;
+
+  struct inode* tp;
+  begin_op();
+  if((tp = create(path, T_SYMLINK, 0, 0)) == 0){
+    end_op();
+    return -1;
+  }
+  if(writei(tp, 0, (uint64)sympath, 0, MAXPATH) != MAXPATH){
+    iunlockput(tp);
+    end_op();
+    return -1;
+  }
+
+  iunlockput(tp);
+  end_op();
   return 0;
 }
