@@ -503,3 +503,73 @@ sys_pipe(void)
   }
   return 0;
 }
+
+uint64 
+sys_mmap(void){
+  uint64 addr;
+  int len, prot, flags, fd, off;
+  argaddr(0, &addr);
+  argint(1, &len);
+  argint(2, &prot);
+  argint(3, &flags);
+  argint(4, &fd);
+  argint(5, &off);
+
+  struct proc* p = myproc();
+  struct file* f = p->ofile[fd];
+  
+  if((flags==MAP_SHARED && f->writable==0 && (prot&PROT_WRITE))) 
+    return -1;
+
+  int idx = 0;
+  for(;idx < NVMA;idx++)
+    if(p->vma[idx].valid==0)
+      break;
+  if(idx == NVMA)
+    panic("All VMA struct is full!");
+
+  struct vma* vp = &p->vma[idx];
+  vp->valid = 1;
+  vp->len = len;
+  vp->flags = flags;
+  vp->off = off;
+  vp->prot = prot;
+  vp->f = f;
+  filedup(f);
+  p->topaddr -= len;
+  vp->addr = p->topaddr;
+  return vp->addr;
+}
+
+uint64 
+sys_munmap(void){
+  uint64 addr;
+  int len;
+  argaddr(0, &addr);
+  argint(1, &len);
+  struct proc* p = myproc();
+  struct vma* vp = 0;
+
+  for(struct vma *now = p->vma;now<p->vma+NVMA;now++){
+    if(now->addr<=addr && addr<now->addr+now->len && now->valid){
+      vp = now;
+      break;
+    }
+  }
+
+  if(vp){
+    if(walkaddr(p->pagetable, addr) != 0){
+      if(vp->flags==MAP_SHARED) 
+        filewrite(vp->f, addr, len);
+      uvmunmap(p->pagetable, addr, len / PGSIZE, 1);
+      return 0;
+    }
+
+    vp->refcnt -= 1;
+    if(vp->refcnt){
+      fileclose(vp->f);
+      vp->valid = 0;
+    }
+  }
+  return 0;
+}

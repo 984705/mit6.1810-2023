@@ -5,6 +5,9 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "sleeplock.h"
+#include "fs.h"
+#include "file.h"
 
 struct spinlock tickslock;
 uint ticks;
@@ -65,9 +68,35 @@ usertrap(void)
     intr_on();
 
     syscall();
+  } else if(r_scause()==13){
+    uint64 target_va = r_stval();
+    struct vma* vp = 0;
+    for(struct vma *now = p->vma;now<p->vma+NVMA;now++){
+      if(now->addr<=target_va && target_va<now->addr+now->len && now->valid){
+        vp = now;
+        break;
+      }
+    }
+
+    if(vp){
+      uint64 mem = (uint64)kalloc();
+      memset((void *)mem, 0, PGSIZE);
+      if(mappages(p->pagetable, target_va, PGSIZE, mem, PTE_U|PTE_V|(vp->prot<<1)) < 0)
+        panic("Cannot map a virtual page for the file!");
+    
+      vp->refcnt += 1;
+      ilock(vp->f->ip);
+      readi(vp->f->ip, 0, mem, target_va-vp->addr, PGSIZE);
+      iunlock(vp->f->ip);
+    }
+    else{
+      printf("Unable to find the VMA struct that the file belongs to!\n");
+      goto unexpected_scause;
+    }
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
+    unexpected_scause:
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     setkilled(p);

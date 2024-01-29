@@ -5,6 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fcntl.h"
 
 struct cpu cpus[NCPU];
 
@@ -124,6 +125,11 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->state = USED;
+  for(int i = 0; i < NVMA; i++){
+     p->vma[i].valid = 0;
+     p->vma[i].refcnt = 0;
+  }
+  p->topaddr = MAXVA - 2 * PGSIZE;
 
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
@@ -298,6 +304,13 @@ fork(void)
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
+  np->topaddr = p->topaddr;
+  for(int i = 0; i < NVMA; i++){
+    if(p->vma[i].valid){
+      filedup(p->vma[i].f);
+      memmove(&np->vma[i], &p->vma[i], sizeof(struct vma));
+    }
+  }
 
   // Cause fork to return 0 in the child.
   np->trapframe->a0 = 0;
@@ -348,6 +361,19 @@ exit(int status)
 {
   struct proc *p = myproc();
 
+  for(int i = 0; i < NVMA; i++){
+    if(p->vma[i].valid){
+      struct vma* vp = &p->vma[i];
+      for(uint64 addr = vp->addr; addr < vp->addr + vp->len; addr += PGSIZE){
+        if(walkaddr(p->pagetable, addr) != 0){
+          if(vp->flags==MAP_SHARED) filewrite(vp->f, addr, PGSIZE);
+          uvmunmap(p->pagetable, addr, 1, 1);
+        }
+      }
+      fileclose(p->vma[i].f);
+      p->vma[i].valid = 0;
+    }
+  }
   if(p == initproc)
     panic("init exiting");
 
